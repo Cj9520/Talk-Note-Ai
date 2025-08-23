@@ -1,95 +1,252 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+'use client';
 
-export default function Home() {
+import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ArrowLeft } from 'lucide-react';
+import { Button } from '../components/ui/button';
+import { ThemeToggle } from '../components/theme-toggle';
+import { HeroSection } from '../components/hero-section';
+import { FeaturesSection } from '../components/features-section';
+import { Footer } from '../components/footer';
+import { NotesSidebar } from '../components/notes-sidebar';
+import { TranscriptionPanel } from '../components/transcription-panel';
+import { SummaryPanel } from '../components/summary-panel';
+import { FloatingRecordButton } from '../components/floating-record-button';
+
+type View = 'landing' | 'dashboard';
+
+// Backend API configuration
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
+
+// Note interface matching backend model
+interface Note {
+  id: string;
+  title: string;
+  transcript: string;
+  summary: string;
+  tags: string[];
+  audio_filename: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export default function App() {
+  const [currentView, setCurrentView] = useState<View>('landing');
+  const [isRecording, setIsRecording] = useState(false);
+  const [selectedNote, setSelectedNote] = useState<string>('');
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [isLoadingNotes, setIsLoadingNotes] = useState(false);
+  // Transcript / summary state for SummaryPanel
+  const [currentTranscript, setCurrentTranscript] = useState('');
+  const [currentSummary, setCurrentSummary] = useState('');
+  const [currentKeyPoints, setCurrentKeyPoints] = useState<string[]>([]);
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+
+  // Load notes from backend
+  useEffect(() => {
+    if (currentView === 'dashboard') {
+      loadNotes();
+    }
+  }, [currentView]);
+
+  const loadNotes = async () => {
+    setIsLoadingNotes(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/notes`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          setNotes(data.notes || []);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading notes:', error);
+    } finally {
+      setIsLoadingNotes(false);
+    }
+  };
+
+  const handleStartRecording = () => {
+    setCurrentView('dashboard');
+    setIsRecording(true);
+    setSelectedNote('');
+  };
+
+  const handleToggleRecording = () => {
+    setIsRecording(!isRecording);
+  };
+
+  const handleNewNote = () => {
+    setSelectedNote('');
+    setIsRecording(true);
+    setCurrentTranscript('');
+    setCurrentSummary('');
+    setCurrentKeyPoints([]);
+  };
+
+  const handleSelectNote = (noteId: string) => {
+    setSelectedNote(noteId);
+    setIsRecording(false);
+  };
+
+  const handleBack = () => {
+    setCurrentView('landing');
+    setIsRecording(false);
+    setSelectedNote('');
+    setCurrentTranscript('');
+    setCurrentSummary('');
+    setCurrentKeyPoints([]);
+  };
+
+  // Summarize helper
+  const summarize = async (text: string) => {
+    try {
+      setIsGeneratingSummary(true);
+      const fd = new FormData();
+      fd.append('text', text);
+      fd.append('max_length', '150');
+      const res = await fetch(`${API_BASE_URL}/summarize`, { method: 'POST', body: fd });
+      if (!res.ok) throw new Error('Summarization failed');
+      const data = await res.json();
+      const sum: string = data.summary || '';
+      setCurrentSummary(sum);
+      // naive key points extraction
+      const bullets = sum
+        .split(/\n|\.|\u2022|-/)
+        .map(s => s.trim())
+        .filter(Boolean)
+        .slice(0, 5);
+      setCurrentKeyPoints(bullets);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsGeneratingSummary(false);
+    }
+  };
+
+  // Callback from TranscriptionPanel when transcript ready
+  const handleTranscriptReady = async (text: string) => {
+    setCurrentTranscript(text);
+    await summarize(text);
+  };
+
+  // Callback from TranscriptionPanel when summary ready
+  const handleSummaryReady = async (summary: string, keyPoints: string[]) => {
+    setCurrentSummary(summary);
+    setCurrentKeyPoints(keyPoints);
+  };
+
+  // Callback from TranscriptionPanel after a successful save
+  const handleSaved = async () => {
+    await loadNotes();
+  };
+
+  const handleDeleteNote: (noteId: string) => Promise<void> = async (noteId: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/notes/${noteId}`, {
+        method: 'DELETE',
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          setNotes(prev => prev.filter(note => note.id !== noteId));
+          if (selectedNote === noteId) {
+            setSelectedNote('');
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error deleting note:', error);
+    }
+  };
+
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol>
-          <li>
-            Get started by editing <code>src/app/page.tsx</code>.
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
-
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-            className={styles.secondary}
-          >
-            Read our docs
-          </a>
+    <div className="min-h-screen bg-background text-foreground overflow-hidden">
+      {/* Header */}
+      <header className="fixed top-0 left-0 right-0 z-50 p-6">
+        <div className="flex items-center justify-between max-w-7xl mx-auto">
+          <div className="flex items-center gap-4">
+            {currentView === 'dashboard' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleBack}
+                className="glass hover:bg-white/20 transition-all duration-300"
+              >
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Back
+              </Button>
+            )}
+            <div className="text-xl font-bold bg-gradient-to-r from-blue-600 to-cyan-600 dark:from-blue-400 dark:to-cyan-400 bg-clip-text text-transparent">
+              Voice Notes AI
+            </div>
+          </div>
+          <ThemeToggle />
         </div>
-      </main>
-      <footer className={styles.footer}>
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+      </header>
+
+      <AnimatePresence mode="wait">
+        {currentView === 'landing' ? (
+          <motion.div
+            key="landing"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.5 }}
+            className="min-h-screen"
+          >
+            <HeroSection onStartRecording={handleStartRecording} />
+            <FeaturesSection />
+            <Footer />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="dashboard"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.5 }}
+            className="h-screen pt-20"
+          >
+            {/* Dashboard Layout */}
+            <div className="h-full flex">
+              <NotesSidebar
+                notes={notes}
+                selectedNote={selectedNote}
+                onSelectNote={handleSelectNote}
+                onNewNote={handleNewNote}
+                onDeleteNote={handleDeleteNote}
+                isLoading={isLoadingNotes}
+              />
+              <TranscriptionPanel
+                isRecording={isRecording}
+                onToggleRecording={handleToggleRecording}
+                onTranscript={handleTranscriptReady}
+                onSummary={handleSummaryReady}
+                onSaved={handleSaved}
+                currentTranscript={currentTranscript}
+                currentSummary={currentSummary}
+                currentKeyPoints={currentKeyPoints}
+                isGeneratingSummary={isGeneratingSummary}
+              />
+              <SummaryPanel
+                isGenerating={isGeneratingSummary}
+                summaryText={currentSummary}
+                keyPoints={currentKeyPoints}
+                onRegenerate={() => summarize(currentTranscript)}
+              />
+            </div>
+
+            {/* Floating Record Button */}
+            <FloatingRecordButton
+              isRecording={isRecording}
+              onToggle={handleToggleRecording}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+      </div>
   );
 }
+
