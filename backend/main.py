@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, ValidationError
 from typing import List, Optional, Dict, Any
+from pathlib import Path
 import os
 import tempfile
 import logging
@@ -35,6 +36,36 @@ ALLOWED_AUDIO_TYPES = {
     'audio/wav', 'audio/mp3', 'audio/mpeg', 'audio/ogg', 
     'audio/webm', 'audio/m4a', 'audio/aac', 'audio/*'
 }
+
+
+def temp_audio_suffix(file: UploadFile) -> str:
+    ext = Path(file.filename or "").suffix.lower()
+    if ext in {".wav", ".webm", ".ogg", ".mp3", ".mpeg", ".m4a", ".opus"}:
+        return ext
+    ct = (file.content_type or "").lower()
+    if "webm" in ct:
+        return ".webm"
+    if "wav" in ct:
+        return ".wav"
+    return ".webm"
+
+
+def cors_allow_origins() -> List[str]:
+    origins = {
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    }
+    fe = os.getenv("FRONTEND_URL", "").strip()
+    if fe and "your-frontend-domain.com" not in fe:
+        origins.add(fe)
+    extras = os.getenv("CORS_EXTRA_ORIGINS", "").strip()
+    if extras:
+        for part in extras.split(","):
+            p = part.strip()
+            if p:
+                origins.add(p)
+    return sorted(origins)
+
 
 # Global services (will be initialized in lifespan)
 transcription_service: Optional[WhisperTranscriptionService] = None
@@ -78,11 +109,7 @@ app = FastAPI(
 # CORS middleware for frontend integration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", 
-        "http://127.0.0.1:3000",
-        os.getenv("FRONTEND_URL", "https://your-frontend-domain.com")
-    ],
+    allow_origins=cors_allow_origins(),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -168,8 +195,8 @@ async def root():
 
 @app.post("/transcribe")
 async def transcribe_audio(
+    background_tasks: BackgroundTasks,
     audio_file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = None,
     services: Dict[str, Any] = Depends(get_services)
 ):
     """
@@ -188,12 +215,12 @@ async def transcribe_audio(
         # Create temporary file
         temp_file_path = None
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=temp_audio_suffix(audio_file)) as temp_file:
                 content = await audio_file.read()
                 temp_file.write(content)
                 temp_file_path = temp_file.name
             
-            # Transcribe using Whisper.cpp
+            # Transcribe using Whisper.cpp (or mock if not configured — see transcription service logs)
             transcript = await services["transcription"].transcribe(temp_file_path)
             
             processing_time = (datetime.now() - start_time).total_seconds()
@@ -208,15 +235,14 @@ async def transcribe_audio(
             }
             
         finally:
-            # Clean up temporary file
-            if temp_file_path and background_tasks:
+            if temp_file_path:
                 background_tasks.add_task(cleanup_temp_file, temp_file_path)
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Transcription failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Transcription failed. Please try again.")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 @app.post("/summarize")
 async def summarize_text(
@@ -259,10 +285,10 @@ async def summarize_text(
 
 @app.post("/process-audio")
 async def process_audio(
+    background_tasks: BackgroundTasks,
     audio_file: UploadFile = File(...),
     title: str = Form(...),
     tags: str = Form(""),
-    background_tasks: BackgroundTasks = None,
     services: Dict[str, Any] = Depends(get_services)
 ):
     """
@@ -281,7 +307,7 @@ async def process_audio(
         # Create temporary file
         temp_file_path = None
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=temp_audio_suffix(audio_file)) as temp_file:
                 content = await audio_file.read()
                 temp_file.write(content)
                 temp_file_path = temp_file.name
@@ -292,8 +318,9 @@ async def process_audio(
             # Step 2: Summarize transcript
             summary = await services["summarization"].summarize(transcript, 150)
             
-            # Step 3: Save to database
-            audio_filename = f"{uuid.uuid4()}.wav"
+            # Step 3: Save to database (keep extension aligned with uploaded audio)
+            _stored_ext = temp_audio_suffix(audio_file)
+            audio_filename = f"{uuid.uuid4()}{_stored_ext}"
             
             note_data = NoteCreate(
                 title=validated_title,
@@ -323,15 +350,14 @@ async def process_audio(
             }
             
         finally:
-            # Clean up temporary file
-            if temp_file_path and background_tasks:
+            if temp_file_path:
                 background_tasks.add_task(cleanup_temp_file, temp_file_path)
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Audio processing failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Audio processing failed. Please try again.")
+        raise HTTPException(status_code=500, detail=f"Audio processing failed: {str(e)}")
 
 @app.get("/notes")
 async def get_notes(

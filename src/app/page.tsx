@@ -68,8 +68,8 @@ export default function App() {
 
   const handleStartRecording = () => {
     setCurrentView('dashboard');
-    setIsRecording(true);
     setSelectedNote('');
+    setIsRecording(false);
   };
 
   const handleToggleRecording = () => {
@@ -78,7 +78,7 @@ export default function App() {
 
   const handleNewNote = () => {
     setSelectedNote('');
-    setIsRecording(true);
+    setIsRecording(false);
     setCurrentTranscript('');
     setCurrentSummary('');
     setCurrentKeyPoints([]);

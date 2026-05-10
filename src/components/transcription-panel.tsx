@@ -1,11 +1,25 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Mic, MicOff, Play, Pause, Save, Trash2, Loader2, Sparkles, Timer } from 'lucide-react';
 import { Button } from './ui/button';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
+
+function parseFastApiDetail(payload: Record<string, unknown>): string | null {
+  const d = payload.detail;
+  if (typeof d === 'string') return d;
+  if (Array.isArray(d)) {
+    const parts = d.map((entry) =>
+      typeof entry === 'object' && entry !== null && 'msg' in entry
+        ? String((entry as { msg: unknown }).msg)
+        : JSON.stringify(entry)
+    );
+    return parts.join('; ');
+  }
+  return null;
+}
 
 interface TranscriptionPanelProps {
   isRecording: boolean;
@@ -34,6 +48,12 @@ export function TranscriptionPanel({
   const audioChunksRef = useRef<Blob[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  /** Synced immediately so async getUserMedia does not see a stale `isRecording` closure. */
+  const isRecordingRef = useRef(false);
+  /** Bumps on each “start recording” effect run to ignore abandoned async setups (e.g. Strict Mode, fast stop). */
+  const recordingSetupGenerationRef = useRef(0);
+  const recordingStartedAtRef = useRef<number | null>(null);
+  const playbackPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [audioUrl, setAudioUrl] = useState('');
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
@@ -44,10 +64,11 @@ export function TranscriptionPanel({
   const [error, setError] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
-  const [recordingTimer, setRecordingTimer] = useState<NodeJS.Timeout | null>(null);
+  /** Wall-clock length when recording stopped (never overwritten by play/pause or ticker). */
+  const [publishedClipDurationSec, setPublishedClipDurationSec] = useState(0);
+  /** From `<audio>` metadata when available (refines published duration). */
   const [audioDuration, setAudioDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
-  const [playbackTimer, setPlaybackTimer] = useState<NodeJS.Timeout | null>(null);
 
   // Format time
   const formatTime = (seconds: number) => {
@@ -56,42 +77,59 @@ export function TranscriptionPanel({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Start recording timer
+  // Live recording timer (only while isRecording — avoids stale-interval leaks)
   useEffect(() => {
-    if (isRecording) {
-      const timer = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
-      }, 1000);
-      setRecordingTimer(timer);
-    } else {
-      if (recordingTimer) {
-        clearInterval(recordingTimer);
-        setRecordingTimer(null);
-      }
-    }
+    if (!isRecording) return;
+    setRecordingTime(0);
+    const id = window.setInterval(() => {
+      setRecordingTime((t) => t + 1);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isRecording]);
 
-    return () => {
-      if (recordingTimer) {
-        clearInterval(recordingTimer);
-      }
-    };
+  useLayoutEffect(() => {
+    isRecordingRef.current = isRecording;
   }, [isRecording]);
 
   // Start/stop recorder when parent toggles
   useEffect(() => {
+    let cancelled = false;
+
+    const stopStream = (stream: MediaStream | null) => {
+      stream?.getTracks().forEach((track) => track.stop());
+    };
+
     const setupRecording = async () => {
+      recordingSetupGenerationRef.current += 1;
+      const setupGeneration = recordingSetupGenerationRef.current;
+
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+      mediaRecorderRef.current = null;
+      if (streamRef.current) {
+        stopStream(streamRef.current);
+        streamRef.current = null;
+      }
+
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
+        const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
-            sampleRate: 44100
-          } 
+            sampleRate: 44100,
+          },
         });
+
+        if (cancelled || setupGeneration !== recordingSetupGenerationRef.current || !isRecordingRef.current) {
+          stopStream(stream);
+          return;
+        }
+
         streamRef.current = stream;
 
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-          ? 'audio/webm;codecs=opus' 
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
           : 'audio/webm';
 
         const recorder = new MediaRecorder(stream, { mimeType });
@@ -110,24 +148,48 @@ export function TranscriptionPanel({
 
         recorder.onstop = () => {
           const blob = new Blob(audioChunksRef.current, { type: mimeType });
-          setAudioBlob(blob);
-          setAudioUrl(URL.createObjectURL(blob));
           audioChunksRef.current = [];
-          
-          // Set the final recording duration - ensure it's at least 1 second
-          const finalDuration = Math.max(recordingTime, 1);
-          setAudioDuration(finalDuration);
-          
-          // Stop all tracks
-          if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
+
+          let elapsedSeconds = 0;
+          if (recordingStartedAtRef.current != null) {
+            elapsedSeconds = Math.max(0, (Date.now() - recordingStartedAtRef.current) / 1000);
+            recordingStartedAtRef.current = null;
           }
+
+          stopStream(streamRef.current);
+          streamRef.current = null;
+          mediaRecorderRef.current = null;
+
+          if (blob.size === 0) {
+            setError('No audio was captured. Try recording again.');
+            setAudioBlob(null);
+            setAudioUrl('');
+            setAudioDuration(0);
+            setPublishedClipDurationSec(0);
+            return;
+          }
+
+          const clipSec = Number.isFinite(elapsedSeconds) && elapsedSeconds > 0 ? elapsedSeconds : 0;
+          setPublishedClipDurationSec(clipSec);
+          setAudioDuration(clipSec);
+
+          setAudioBlob(blob);
+          setAudioUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return URL.createObjectURL(blob);
+          });
         };
 
-        if (isRecording && recorder.state === 'inactive') {
-          setRecordingTime(0);
-          recorder.start(1000); // 1 second chunks
+        if (cancelled || setupGeneration !== recordingSetupGenerationRef.current || !isRecordingRef.current) {
+          stopStream(stream);
+          streamRef.current = null;
+          return;
         }
+
+        audioChunksRef.current = [];
+        setRecordingTime(0);
+        recordingStartedAtRef.current = Date.now();
+        recorder.start(1000);
       } catch (err) {
         console.error('Microphone access error:', err);
         setError('Microphone permission denied. Please allow microphone access.');
@@ -135,107 +197,105 @@ export function TranscriptionPanel({
     };
 
     if (isRecording) {
-      setupRecording();
-    } else if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      setError('');
+      void setupRecording();
+    } else if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
     }
 
     return () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      cancelled = true;
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
+        stopStream(streamRef.current);
+        streamRef.current = null;
       }
     };
   }, [isRecording]);
 
-  // Handle audio events
+  const clearPlaybackPoll = () => {
+    if (playbackPollRef.current) {
+      clearInterval(playbackPollRef.current);
+      playbackPollRef.current = null;
+    }
+  };
+
+  // Load blob into `<audio>` and sync duration from browser metadata (independent of recordingTime ticker)
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio) return;
+    if (!audio || !audioUrl) {
+      setAudioDuration(0);
+      return;
+    }
 
-    const handleLoadedMetadata = () => {
-      if (audio.duration && isFinite(audio.duration)) {
-        setAudioDuration(audio.duration);
-      } else {
-        // Fallback to recording time if audio duration is not available
-        setAudioDuration(recordingTime);
+    const syncDurationFromElement = () => {
+      const d = audio.duration;
+      if (Number.isFinite(d) && d > 0) {
+        setAudioDuration(d);
       }
     };
 
-    const handleCanPlay = () => {
-      if (audio.duration && isFinite(audio.duration)) {
-        setAudioDuration(audio.duration);
-      } else {
-        setAudioDuration(recordingTime);
-      }
-    };
-
-    const handleEnded = () => {
+    const onEnded = () => {
       setIsPlaying(false);
       setCurrentTime(0);
-      if (playbackTimer) {
-        clearInterval(playbackTimer);
-        setPlaybackTimer(null);
-      }
+      clearPlaybackPoll();
     };
 
-    const handlePause = () => {
+    const onPause = () => {
       setIsPlaying(false);
-      if (playbackTimer) {
-        clearInterval(playbackTimer);
-        setPlaybackTimer(null);
-      }
+      clearPlaybackPoll();
     };
 
-    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-    audio.addEventListener('canplay', handleCanPlay);
-    audio.addEventListener('ended', handleEnded);
-    audio.addEventListener('pause', handlePause);
+    audio.pause();
+    setIsPlaying(false);
+    setCurrentTime(0);
+    clearPlaybackPoll();
+
+    audio.src = audioUrl;
+    audio.preload = 'metadata';
+    audio.load();
+
+    audio.addEventListener('loadedmetadata', syncDurationFromElement);
+    audio.addEventListener('durationchange', syncDurationFromElement);
+    audio.addEventListener('ended', onEnded);
+    audio.addEventListener('pause', onPause);
 
     return () => {
-      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-      audio.removeEventListener('canplay', handleCanPlay);
-      audio.removeEventListener('ended', handleEnded);
-      audio.removeEventListener('pause', handlePause);
+      audio.removeEventListener('loadedmetadata', syncDurationFromElement);
+      audio.removeEventListener('durationchange', syncDurationFromElement);
+      audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('pause', onPause);
+      clearPlaybackPoll();
     };
-  }, [playbackTimer, recordingTime]);
+  }, [audioUrl]);
+
+  const previewTotalSeconds =
+    Number.isFinite(audioDuration) && audioDuration > 0 ? audioDuration : publishedClipDurationSec;
 
   const playAudio = () => {
     if (!audioRef.current || !audioUrl) return;
-    
+
+    const audio = audioRef.current;
+
     if (isPlaying) {
-      audioRef.current.pause();
+      audio.pause();
       setIsPlaying(false);
-      if (playbackTimer) {
-        clearInterval(playbackTimer);
-        setPlaybackTimer(null);
-      }
-    } else {
-      audioRef.current.src = audioUrl;
-      
-      // Set duration immediately if available
-      if (audioRef.current.duration && isFinite(audioRef.current.duration)) {
-        setAudioDuration(audioRef.current.duration);
-      } else {
-        setAudioDuration(recordingTime);
-      }
-      
-      audioRef.current.play();
-      setIsPlaying(true);
-      
-      // Start playback timer to update current time
-      const timer = setInterval(() => {
-        if (audioRef.current) {
-          const current = audioRef.current.currentTime;
-          if (isFinite(current)) {
-            setCurrentTime(current);
-          }
-        }
-      }, 100);
-      setPlaybackTimer(timer);
+      clearPlaybackPoll();
+      return;
     }
+
+    void audio.play();
+    setIsPlaying(true);
+
+    clearPlaybackPoll();
+    playbackPollRef.current = setInterval(() => {
+      const el = audioRef.current;
+      if (!el) return;
+      const t = el.currentTime;
+      if (Number.isFinite(t)) setCurrentTime(t);
+    }, 100);
   };
 
   const processAudio = async () => {
@@ -245,25 +305,52 @@ export function TranscriptionPanel({
     
     try {
       const formData = new FormData();
-      formData.append('audio', audioBlob, 'recording.webm');
+      formData.append('audio_file', audioBlob, 'recording.webm');
       
       const response = await fetch(`${API_BASE_URL}/transcribe`, {
         method: 'POST',
-        body: formData
+        body: formData,
       });
-      
-      if (!response.ok) {
-        throw new Error('Transcription failed');
+
+      const raw = await response.text();
+      let payload: Record<string, unknown> | null = null;
+      if (raw) {
+        try {
+          payload = JSON.parse(raw) as Record<string, unknown>;
+        } catch {
+          /* HTML error pages, proxies, etc. */
+        }
       }
-      
-      const data = await response.json();
-      const transcriptText = data.transcript || '';
+
+      if (!response.ok) {
+        const hint =
+          (payload ? parseFastApiDetail(payload) : null) ??
+          (raw.trim() ? raw.trim().slice(0, 400) : response.statusText);
+        throw new Error(hint || `Transcription failed (HTTP ${response.status})`);
+      }
+
+      if (!payload) {
+        throw new Error('API returned a non-JSON response — is the backend URL correct (NEXT_PUBLIC_API_BASE_URL)?');
+      }
+
+      const transcriptText = typeof payload.transcript === 'string' ? payload.transcript.trim() : '';
+      if (!transcriptText) {
+        setError(
+          'Transcription returned empty text. Speak clearly for a few seconds, ensure the backend is running '
+          + '(same host/port as NEXT_PUBLIC_API_BASE_URL), and check server logs for FFmpeg / Whisper errors.'
+        );
+        return;
+      }
       setTranscript(transcriptText);
       onTranscript?.(transcriptText);
       
     } catch (e) {
       console.error('Processing error:', e);
-      setError('Audio processing failed. Please try again.');
+      if (e instanceof TypeError || (e instanceof Error && e.message === 'Failed to fetch')) {
+        setError(`Cannot reach API at ${API_BASE_URL}. Start the backend (e.g. python start.py or uvicorn) and check CORS if the page origin differs from localhost / 127.0.0.1.`);
+      } else {
+        setError(e instanceof Error ? e.message : 'Audio processing failed. Please try again.');
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -280,7 +367,7 @@ export function TranscriptionPanel({
     
     try {
       const formData = new FormData();
-      formData.append('audio', audioBlob, 'recording.webm');
+      formData.append('audio_file', audioBlob, 'recording.webm');
       formData.append('title', title);
       formData.append('tags', tags);
       
@@ -288,25 +375,43 @@ export function TranscriptionPanel({
         method: 'POST',
         body: formData
       });
-      
-      if (!response.ok) {
-        throw new Error('Save failed');
+
+      const rawSave = await response.text();
+      let savePayload: Record<string, unknown> | null = null;
+      if (rawSave) {
+        try {
+          savePayload = JSON.parse(rawSave) as Record<string, unknown>;
+        } catch {
+          /* ignore */
+        }
       }
-      
+
+      if (!response.ok) {
+        const detail = savePayload ? parseFastApiDetail(savePayload) : null;
+        const snippet = rawSave.trim().slice(0, 400);
+        const hint =
+          detail ?? (snippet ? snippet : null) ?? response.statusText ?? `Save failed (HTTP ${response.status})`;
+        throw new Error(hint);
+      }
+
       // Clear form after successful save
       setTitle('');
       setTags('');
       setTranscript('');
-      setAudioUrl('');
+      setAudioUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return '';
+      });
       setAudioBlob(null);
       setRecordingTime(0);
       setAudioDuration(0);
+      setPublishedClipDurationSec(0);
       setCurrentTime(0);
       onSaved?.();
       
     } catch (e) {
       console.error('Save error:', e);
-      setError('Failed to save note. Please try again.');
+      setError(e instanceof Error ? e.message : 'Failed to save note. Please try again.');
     } finally {
       setIsProcessing(false);
     }
@@ -314,18 +419,19 @@ export function TranscriptionPanel({
 
   const clearAll = () => {
     setTranscript('');
-    setAudioUrl('');
+    setAudioUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return '';
+    });
     setAudioBlob(null);
     setTitle('');
     setTags('');
     setError('');
     setRecordingTime(0);
     setAudioDuration(0);
+    setPublishedClipDurationSec(0);
     setCurrentTime(0);
-    if (playbackTimer) {
-      clearInterval(playbackTimer);
-      setPlaybackTimer(null);
-    }
+    clearPlaybackPoll();
   };
 
   return (
@@ -428,17 +534,12 @@ export function TranscriptionPanel({
               {isPlaying ? 'Pause' : 'Play'}
             </Button>
             <span className="text-muted-foreground">
-              {isPlaying 
-                ? `${formatTime(currentTime)} / ${formatTime(audioDuration || recordingTime)}`
-                : `Duration: ${formatTime(audioDuration || recordingTime)}`
-              }
+              {isPlaying
+                ? `${formatTime(currentTime)} / ${formatTime(previewTotalSeconds)}`
+                : `Duration: ${formatTime(previewTotalSeconds)}`}
             </span>
           </div>
-          <audio 
-            ref={audioRef} 
-            onEnded={() => setIsPlaying(false)}
-            onPause={() => setIsPlaying(false)}
-          />
+          <audio ref={audioRef} preload="metadata" />
         </div>
       )}
 

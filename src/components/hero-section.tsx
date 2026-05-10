@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { Mic, Sparkles } from 'lucide-react';
 import { Button } from './ui/button';
@@ -8,31 +9,55 @@ interface HeroSectionProps {
   onStartRecording: () => void;
 }
 
+type ParticleConfig = {
+  leftPct: number;
+  topPct: number;
+  xEnd: number;
+  yEnd: number;
+  duration: number;
+  delay: number;
+};
+
 export function HeroSection({ onStartRecording }: HeroSectionProps) {
+  const [particles, setParticles] = useState<ParticleConfig[]>([]);
+
+  useEffect(() => {
+    setParticles(
+      Array.from({ length: 20 }, () => ({
+        leftPct: Math.random() * 100,
+        topPct: Math.random() * 100,
+        xEnd: Math.random() * 200 - 100,
+        yEnd: Math.random() * 200 - 100,
+        duration: 3 + Math.random() * 2,
+        delay: Math.random() * 2,
+      }))
+    );
+  }, []);
+
   return (
     <section className="min-h-screen flex items-center justify-center px-6 pt-20">
       <div className="text-center max-w-4xl mx-auto">
-        {/* Floating Particles */}
+        {/* Floating Particles — random layout only after mount to avoid SSR hydration mismatch */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          {[...Array(20)].map((_, i) => (
+          {particles.map((p, i) => (
             <motion.div
               key={i}
               className="absolute w-1 h-1 bg-voice-neon rounded-full"
               initial={{ opacity: 0, scale: 0 }}
-              animate={{ 
-                opacity: [0, 1, 0], 
+              animate={{
+                opacity: [0, 1, 0],
                 scale: [0, 1, 0],
-                x: [0, Math.random() * 200 - 100],
-                y: [0, Math.random() * 200 - 100]
+                x: [0, p.xEnd],
+                y: [0, p.yEnd],
               }}
               transition={{
-                duration: 3 + Math.random() * 2,
+                duration: p.duration,
                 repeat: Infinity,
-                delay: Math.random() * 2
+                delay: p.delay,
               }}
               style={{
-                left: `${Math.random() * 100}%`,
-                top: `${Math.random() * 100}%`,
+                left: `${p.leftPct}%`,
+                top: `${p.topPct}%`,
               }}
             />
           ))}

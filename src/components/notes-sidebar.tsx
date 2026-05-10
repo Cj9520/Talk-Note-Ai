@@ -41,11 +41,15 @@ export function NotesSidebar({ notes, selectedNote, onSelectNote, onNewNote, onD
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
-  // Calculate duration (mock for now - would come from backend)
+  // Mock duration — deterministic from note id so SSR markup matches hydration (no Math.random per render)
   const getDuration = (note: Note) => {
-    // This would be calculated from the actual audio file duration
     const durations = ['12:34', '8:45', '25:12', '15:30', '18:22'];
-    return durations[Math.floor(Math.random() * durations.length)];
+    let hash = 0;
+    for (let i = 0; i < note.id.length; i++) {
+      hash = (hash << 5) - hash + note.id.charCodeAt(i);
+      hash |= 0;
+    }
+    return durations[Math.abs(hash) % durations.length];
   };
 
   return (
