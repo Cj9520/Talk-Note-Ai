@@ -251,37 +251,39 @@ async def summarize_text(
     services: Dict[str, Any] = Depends(get_services)
 ):
     """
-    Summarize text using HuggingFace transformers (free, local processing)
+    Summarize text using LexRank (sumy, free, fully local).
+    Returns summary, key_points, keywords, word_count, reading_time_seconds.
     """
     start_time = datetime.now()
-    
+
     try:
-        # Validate input
         validated_text = validate_text_input(text)
-        
-        # Validate max_length
+
         if max_length < 10 or max_length > 500:
             raise HTTPException(status_code=400, detail="max_length must be between 10 and 500")
-        
-        # Summarize using HuggingFace
-        summary = await services["summarization"].summarize(validated_text, max_length)
-        
+
+        # Full analysis: summary + key points + keywords
+        result = await services["summarization"].summarize_with_keywords(validated_text, max_length)
+
         processing_time = (datetime.now() - start_time).total_seconds()
-        
+
         return {
             "success": True,
-            "summary": summary,
-            "model": "facebook/bart-large-cnn",
+            "summary": result.get("summary", ""),
+            "key_points": result.get("key_points", []),
+            "keywords": result.get("keywords", []),
+            "word_count": result.get("word_count", 0),
+            "reading_time_seconds": result.get("reading_time_seconds", 0),
+            "model": result.get("model", "sumy/lexrank"),
             "processing_time_seconds": processing_time,
             "input_length": len(validated_text),
-            "output_length": len(summary)
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Summarization failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Summarization failed. Please try again.")
+        raise HTTPException(status_code=500, detail=f"Summarization failed: {str(e)}")
 
 @app.post("/process-audio")
 async def process_audio(
@@ -315,13 +317,14 @@ async def process_audio(
             # Step 1: Transcribe audio
             transcript = await services["transcription"].transcribe(temp_file_path)
             
-            # Step 2: Summarize transcript
-            summary = await services["summarization"].summarize(transcript, 150)
-            
+            # Step 2: Summarize transcript → full analysis
+            analysis = await services["summarization"].summarize_with_keywords(transcript, 150)
+            summary = analysis.get("summary", "")
+
             # Step 3: Save to database (keep extension aligned with uploaded audio)
             _stored_ext = temp_audio_suffix(audio_file)
             audio_filename = f"{uuid.uuid4()}{_stored_ext}"
-            
+
             note_data = NoteCreate(
                 title=validated_title,
                 transcript=transcript,
@@ -329,21 +332,27 @@ async def process_audio(
                 tags=tag_list,
                 audio_filename=audio_filename
             )
-            
+
             # Save audio file
             await services["database"].save_audio_file(audio_filename, content)
-            
+
             # Save note to database
             saved_note = await services["database"].create_note(note_data)
-            
+
             processing_time = (datetime.now() - start_time).total_seconds()
-            
+
             return {
                 "success": True,
                 "note": saved_note,
+                "analysis": {
+                    "key_points": analysis.get("key_points", []),
+                    "keywords": analysis.get("keywords", []),
+                    "word_count": analysis.get("word_count", 0),
+                    "reading_time_seconds": analysis.get("reading_time_seconds", 0),
+                },
                 "processing": {
                     "transcription_model": "whisper.cpp",
-                    "summarization_model": "facebook/bart-large-cnn",
+                    "summarization_model": analysis.get("model", "sumy/lexrank"),
                     "processing_time_seconds": processing_time,
                     "file_size_bytes": len(content)
                 }

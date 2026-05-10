@@ -12,6 +12,7 @@ import { NotesSidebar } from '../components/notes-sidebar';
 import { TranscriptionPanel } from '../components/transcription-panel';
 import { SummaryPanel } from '../components/summary-panel';
 import { FloatingRecordButton } from '../components/floating-record-button';
+import { NotePreviewModal } from '../components/note-preview-modal';
 
 type View = 'landing' | 'dashboard';
 
@@ -40,7 +41,12 @@ export default function App() {
   const [currentTranscript, setCurrentTranscript] = useState('');
   const [currentSummary, setCurrentSummary] = useState('');
   const [currentKeyPoints, setCurrentKeyPoints] = useState<string[]>([]);
+  const [currentKeywords, setCurrentKeywords] = useState<string[]>([]);
+  const [currentWordCount, setCurrentWordCount] = useState<number | undefined>(undefined);
+  const [currentReadingTime, setCurrentReadingTime] = useState<number | undefined>(undefined);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  // Note preview modal
+  const [previewNote, setPreviewNote] = useState<Note | null>(null);
 
   // Load notes from backend
   useEffect(() => {
@@ -82,6 +88,9 @@ export default function App() {
     setCurrentTranscript('');
     setCurrentSummary('');
     setCurrentKeyPoints([]);
+    setCurrentKeywords([]);
+    setCurrentWordCount(undefined);
+    setCurrentReadingTime(undefined);
   };
 
   const handleSelectNote = (noteId: string) => {
@@ -96,6 +105,9 @@ export default function App() {
     setCurrentTranscript('');
     setCurrentSummary('');
     setCurrentKeyPoints([]);
+    setCurrentKeywords([]);
+    setCurrentWordCount(undefined);
+    setCurrentReadingTime(undefined);
   };
 
   // Summarize helper
@@ -108,15 +120,11 @@ export default function App() {
       const res = await fetch(`${API_BASE_URL}/summarize`, { method: 'POST', body: fd });
       if (!res.ok) throw new Error('Summarization failed');
       const data = await res.json();
-      const sum: string = data.summary || '';
-      setCurrentSummary(sum);
-      // naive key points extraction
-      const bullets = sum
-        .split(/\n|\.|\u2022|-/)
-        .map(s => s.trim())
-        .filter(Boolean)
-        .slice(0, 5);
-      setCurrentKeyPoints(bullets);
+      setCurrentSummary(data.summary || '');
+      setCurrentKeyPoints(Array.isArray(data.key_points) ? data.key_points : []);
+      setCurrentKeywords(Array.isArray(data.keywords) ? data.keywords : []);
+      setCurrentWordCount(typeof data.word_count === 'number' ? data.word_count : undefined);
+      setCurrentReadingTime(typeof data.reading_time_seconds === 'number' ? data.reading_time_seconds : undefined);
     } catch (e) {
       console.error(e);
     } finally {
@@ -143,17 +151,13 @@ export default function App() {
 
   const handleDeleteNote: (noteId: string) => Promise<void> = async (noteId: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/notes/${noteId}`, {
-        method: 'DELETE',
-      });
-      
+      const response = await fetch(`${API_BASE_URL}/notes/${noteId}`, { method: 'DELETE' });
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
           setNotes(prev => prev.filter(note => note.id !== noteId));
-          if (selectedNote === noteId) {
-            setSelectedNote('');
-          }
+          if (selectedNote === noteId) setSelectedNote('');
+          if (previewNote?.id === noteId) setPreviewNote(null);
         }
       }
     } catch (error) {
@@ -217,6 +221,7 @@ export default function App() {
                 onSelectNote={handleSelectNote}
                 onNewNote={handleNewNote}
                 onDeleteNote={handleDeleteNote}
+                onPreviewNote={(note) => setPreviewNote(note)}
                 isLoading={isLoadingNotes}
               />
               <TranscriptionPanel
@@ -234,6 +239,9 @@ export default function App() {
                 isGenerating={isGeneratingSummary}
                 summaryText={currentSummary}
                 keyPoints={currentKeyPoints}
+                keywords={currentKeywords}
+                wordCount={currentWordCount}
+                readingTimeSeconds={currentReadingTime}
                 onRegenerate={() => summarize(currentTranscript)}
               />
             </div>
@@ -246,7 +254,14 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
-      </div>
+
+      {/* Note Preview Modal — rendered outside the layout flow */}
+      <NotePreviewModal
+        note={previewNote}
+        onClose={() => setPreviewNote(null)}
+        onDelete={handleDeleteNote}
+      />
+    </div>
   );
 }
 
