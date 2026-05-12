@@ -109,7 +109,18 @@ class WhisperTranscriptionService:
                 exe = p / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
                 if exe.is_file():
                     return str(exe.resolve())
-        return shutil.which("ffmpeg")
+            # FFMPEG_PATH was set but the path doesn't exist on this OS
+            # (e.g. a Windows path running on Render's Linux) — fall back to system PATH.
+            logger.warning(
+                "FFMPEG_PATH '%s' does not exist on this system (possibly a Windows path "
+                "running on Linux). Falling back to system 'ffmpeg' on PATH.",
+                self._ffmpeg_path,
+            )
+        # Last resort: check if ffmpeg is available as a system command
+        system_ffmpeg = shutil.which("ffmpeg")
+        if system_ffmpeg:
+            logger.info("Using system FFmpeg found at: %s", system_ffmpeg)
+        return system_ffmpeg
 
     async def transcribe(self, audio_file_path: str, language: str | None = None) -> str:
         """Transcribe audio. Pass language='hi' / 'fr' etc. to pin a language,
