@@ -29,7 +29,7 @@ services:
       - key: FFMPEG_PATH
         value: /usr/bin/ffmpeg
       - key: WHISPER_CPP_EXECUTABLE
-        value: /app/whisper.cpp/main
+        value: /app/whisper.cpp/whisper-cli
       - key: WHISPER_CPP_MODEL
         value: /app/whisper.cpp/models/ggml-tiny.bin
 

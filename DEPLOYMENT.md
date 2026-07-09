@@ -91,7 +91,7 @@ We use **Docker** on Render to build the server, compile `whisper.cpp` natively 
      * `MONGODB_DATABASE`: `voice_notes`
      * `AUDIO_STORAGE_PATH`: `/app/audio_files`
      * `FFMPEG_PATH`: `/usr/bin/ffmpeg`
-     * `WHISPER_CPP_EXECUTABLE`: `/app/whisper.cpp/main`
+     * `WHISPER_CPP_EXECUTABLE`: `/app/whisper.cpp/whisper-cli`
      * `WHISPER_CPP_MODEL`: `/app/whisper.cpp/models/ggml-tiny.bin` (using the lightweight `tiny` model to fit in Render Free tier's 512MB RAM).
    - Click **Deploy Web Service**.
 

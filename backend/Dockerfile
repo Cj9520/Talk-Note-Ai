@@ -1,9 +1,10 @@
 # Multi-stage build to compile whisper.cpp and keep the final image small
 FROM python:3.11-slim AS builder
 
-# Install build dependencies
+# Install build dependencies (cmake is required by newer whisper.cpp build system)
 RUN apt-get update && apt-get install -y \
     build-essential \
+    cmake \
     git \
     wget \
     && rm -rf /var/lib/apt/lists/*
@@ -33,7 +34,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy whisper.cpp executable and the downloaded model from builder stage
-COPY --from=builder /build/whisper.cpp/main ./whisper.cpp/main
+# Newer whisper.cpp versions place the binary under build/bin/whisper-cli
+COPY --from=builder /build/whisper.cpp/build/bin/whisper-cli ./whisper.cpp/whisper-cli
 COPY --from=builder /build/whisper.cpp/models/ggml-tiny.bin ./whisper.cpp/models/ggml-tiny.bin
 
 # Copy backend source code
@@ -47,7 +49,7 @@ ENV PORT=10000
 ENV HOST=0.0.0.0
 ENV RELOAD=false
 ENV FFMPEG_PATH=/usr/bin/ffmpeg
-ENV WHISPER_CPP_EXECUTABLE=/app/whisper.cpp/main
+ENV WHISPER_CPP_EXECUTABLE=/app/whisper.cpp/whisper-cli
 ENV WHISPER_CPP_MODEL=/app/whisper.cpp/models/ggml-tiny.bin
 ENV AUDIO_STORAGE_PATH=/app/audio_files
 
