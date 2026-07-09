@@ -33,9 +33,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy whisper.cpp executable and the downloaded model from builder stage
-# Newer whisper.cpp versions place the binary under build/bin/whisper-cli
+# Copy whisper.cpp executable, shared libraries, and the downloaded model from builder stage
+# Newer whisper.cpp versions place the binary under build/bin/whisper-cli and dynamic libs under build/src
 COPY --from=builder /build/whisper.cpp/build/bin/whisper-cli ./whisper.cpp/whisper-cli
+COPY --from=builder /build/whisper.cpp/build/src/libwhisper.so* /usr/lib/
 COPY --from=builder /build/whisper.cpp/models/ggml-tiny.bin ./whisper.cpp/models/ggml-tiny.bin
 
 # Copy backend source code
