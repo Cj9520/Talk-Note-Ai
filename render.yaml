@@ -16,6 +16,10 @@ services:
       - key: MONGODB_DATABASE
         value: voice_notes
       
+      # Frontend URL to allow CORS requests (e.g. https://talk-note-ai.vercel.app)
+      - key: FRONTEND_URL
+        sync: false
+      
       # MongoDB URL must be set in the Render dashboard after creating a MongoDB Atlas database
       # Example: mongodb+srv://<username>:<password>@cluster0.xxxx.mongodb.net
       - key: MONGODB_URL

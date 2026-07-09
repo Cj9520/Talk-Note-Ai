@@ -17,7 +17,7 @@ import { NotePreviewModal } from '../components/note-preview-modal';
 type View = 'landing' | 'dashboard';
 
 // Backend API configuration
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://voice-notes-backend-wz8c.onrender.com/';
 
 // Note interface matching backend model
 interface Note {
@@ -183,7 +183,7 @@ export default function App() {
               </Button>
             )}
             <div className="text-xl font-bold bg-gradient-to-r from-blue-600 to-cyan-600 dark:from-blue-400 dark:to-cyan-400 bg-clip-text text-transparent">
-              Voice Notes AI
+              Talk Note AI
             </div>
           </div>
           <ThemeToggle />
