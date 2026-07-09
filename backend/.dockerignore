@@ -1,0 +1,26 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local virtual environment
+venv/
+.venv/
+env/
+.env
+.env.local
+
+# Local audio storage & logs
+audio_files/
+logs/
+uploads/
+
+# Windows-specific whisper.cpp binaries (which won't run on Linux anyway)
+whisper_bin/
+whisper.cpp/
+
+# Other tools
+.git
+.gitignore
+.vscode/

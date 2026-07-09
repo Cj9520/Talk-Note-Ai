@@ -1,0 +1,42 @@
+services:
+  # Voice Notes AI Backend Web Service
+  - type: web
+    name: voice-notes-backend
+    env: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    plan: free # Can be upgraded to 'starter' for more RAM and persistent disk
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: HOST
+        value: 0.0.0.0
+      - key: RELOAD
+        value: "false"
+      - key: MONGODB_DATABASE
+        value: voice_notes
+      
+      # MongoDB URL must be set in the Render dashboard after creating a MongoDB Atlas database
+      # Example: mongodb+srv://<username>:<password>@cluster0.xxxx.mongodb.net
+      - key: MONGODB_URL
+        sync: false
+
+      # Audio storage path
+      - key: AUDIO_STORAGE_PATH
+        value: /app/audio_files
+
+      # Whisper.cpp Configuration (Configured automatically in the Dockerfile)
+      - key: FFMPEG_PATH
+        value: /usr/bin/ffmpeg
+      - key: WHISPER_CPP_EXECUTABLE
+        value: /app/whisper.cpp/main
+      - key: WHISPER_CPP_MODEL
+        value: /app/whisper.cpp/models/ggml-tiny.bin
+
+    # Note: Render Free tier does NOT support Persistent Disks.
+    # If you upgrade to a paid Starter plan, you can uncomment this section
+    # to prevent your audio files from being deleted when the server restarts.
+    # disk:
+    #   name: audio-storage
+    #   mountPath: /app/audio_files
+    #   sizeGB: 1

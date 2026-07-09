@@ -59,17 +59,57 @@ Deploy everything on your own server/VPS.
    - Copy the connection string
    - Replace `<password>` with your database user password
 
-### Step 2: Backend Deployment (Railway)
+### Step 2: Backend Deployment (Render or Railway)
+
+You can choose to deploy the backend to Render (highly recommended for custom setups requiring FFmpeg and Whisper.cpp) or Railway.
+
+#### Option A: Deploy to Render (Recommended for full FFmpeg/Whisper support)
+
+We use **Docker** on Render to build the server, compile `whisper.cpp` natively for Linux, and install `ffmpeg` automatically.
+
+1. **Create a Render Account**
+   - Go to [Render](https://render.com/) and sign up.
+
+2. **Deploy via Blueprints (Easiest)**
+   - Render will read the `render.yaml` file in the root of your project.
+   - Go to the **Blueprints** tab on the Render Dashboard.
+   - Click **New Blueprint Instance**.
+   - Connect your GitHub repository.
+   - Enter a name for your group of services.
+   - Set the `MONGODB_URL` environment variable value to your MongoDB Atlas connection string.
+   - Click **Approve**. Render will set up the Web Service automatically using the [Dockerfile](file:///c:/Users/Chira/OneDrive/Desktop/techheck/projects/project1/voice-notes-app/backend/Dockerfile).
+
+3. **Alternative Manual Setup on Render**
+   - Click **New +** and select **Web Service**.
+   - Connect your GitHub repository.
+   - Choose **Docker** as the Runtime (Render will automatically detect the [Dockerfile](file:///c:/Users/Chira/OneDrive/Desktop/techheck/projects/project1/voice-notes-app/backend/Dockerfile) in the `backend` folder if you set the Docker build context).
+   - Set the following configuration details:
+     * **Root Directory**: `backend`
+     * **Runtime**: `Docker`
+   - In the **Environment** section, add these Environment Variables:
+     * `MONGODB_URL`: *your_mongodb_atlas_connection_string*
+     * `MONGODB_DATABASE`: `voice_notes`
+     * `AUDIO_STORAGE_PATH`: `/app/audio_files`
+     * `FFMPEG_PATH`: `/usr/bin/ffmpeg`
+     * `WHISPER_CPP_EXECUTABLE`: `/app/whisper.cpp/main`
+     * `WHISPER_CPP_MODEL`: `/app/whisper.cpp/models/ggml-tiny.bin` (using the lightweight `tiny` model to fit in Render Free tier's 512MB RAM).
+   - Click **Deploy Web Service**.
+
+> [!WARNING]
+> **Storage & RAM Limits on Render Free Tier:**
+> 1. **Ephemeral Filesystem**: Render Free services delete local files on restart/redeploy. Audio files stored in `/app/audio_files` will be temporary. For persistent storage, upgrade to a paid Render plan and attach a Persistent Disk (see commented section in `render.yaml`), or update the code to use MongoDB GridFS or S3.
+> 2. **Memory Limit (512MB RAM)**: Whisper inference takes CPU and RAM. The `tiny` model (~75MB) is used by default in our Dockerfile to prevent Out-Of-Memory (OOM) crashes. If you experience crashes, consider upgrading to a paid tier or disabling Whisper by running in Mock Mode (unset `WHISPER_CPP_EXECUTABLE` and `WHISPER_CPP_MODEL`).
+
+---
+
+#### Option B: Deploy to Railway
 
 1. **Create Railway Account**
-   - Go to [Railway](https://railway.app/)
-   - Sign up with GitHub
+   - Go to [Railway](https://railway.app/) and sign up.
 
 2. **Deploy Backend**
-   - Click "New Project"
-   - Choose "Deploy from GitHub repo"
-   - Select your repository
-   - Set the root directory to `backend`
+   - Click "New Project" -> "Deploy from GitHub repo".
+   - Select your repository and set the root directory to `backend`.
 
 3. **Configure Environment Variables**
    ```
@@ -81,9 +121,7 @@ Deploy everything on your own server/VPS.
    ```
 
 4. **Deploy**
-   - Railway will automatically detect it's a Python project
-   - It will install dependencies from `requirements.txt`
-   - The app will be deployed and you'll get a URL
+   - Railway will detect the Python project, install dependencies, and deploy the app. Note that you may need a custom Nixpack configuration to support `ffmpeg` on Railway.
 
 ### Step 3: Frontend Deployment (Vercel)
 
