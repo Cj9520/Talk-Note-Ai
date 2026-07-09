@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { Mic, MicOff, Play, Pause, Save, Trash2, Loader2, Sparkles, Timer } from 'lucide-react';
 import { Button } from './ui/button';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
 
 function parseFastApiDetail(payload: Record<string, unknown>): string | null {
   const d = payload.detail;

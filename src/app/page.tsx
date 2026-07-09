@@ -16,8 +16,7 @@ import { NotePreviewModal } from '../components/note-preview-modal';
 
 type View = 'landing' | 'dashboard';
 
-// Backend API configuration
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://voice-notes-backend-wz8c.onrender.com/';
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || 'https://voice-notes-backend-wz8c.onrender.com').replace(/\/$/, '');
 
 // Note interface matching backend model
 interface Note {
